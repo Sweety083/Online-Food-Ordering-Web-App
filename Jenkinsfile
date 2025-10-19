@@ -1,0 +1,78 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKER_HUB_CREDENTIALS = 'dockerhub'
+        DOCKER_HUB_REPO = 'sweety083/online-food-ordering' // change this to your actual DockerHub repo name
+        APP_NAME = 'online-food-ordering'
+        K8S_NAMESPACE = 'production'
+    }
+
+    stages {
+        stage('Checkout Code') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    sh 'docker build -t $DOCKER_HUB_REPO:latest .'
+                }
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: "${DOCKER_HUB_CREDENTIALS}", usernameVariable: 'DOCKERHUB_USER', passwordVariable: 'DOCKERHUB_PASS')]) {
+                    script {
+                        sh '''
+                            echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin
+                            docker push $DOCKER_HUB_REPO:latest
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes (Green)') {
+            steps {
+                script {
+                    sh '''
+                        kubectl apply -f k8s/deployment-green.yaml -n $K8S_NAMESPACE --validate=false
+                        kubectl apply -f k8s/service.yaml -n $K8S_NAMESPACE --validate=false
+                    '''
+                }
+            }
+        }
+
+        stage('Switch Service (Blue-Green)') {
+            steps {
+                script {
+                    sh '''
+                        CURRENT_COLOR=$(kubectl get svc $APP_NAME -n $K8S_NAMESPACE -o jsonpath='{.spec.selector.color}')
+                        if [ "$CURRENT_COLOR" = "blue" ]; then
+                            NEW_COLOR="green"
+                        else
+                            NEW_COLOR="blue"
+                        fi
+                        echo "Switching service to $NEW_COLOR version"
+                        kubectl patch svc $APP_NAME -n $K8S_NAMESPACE -p '{"spec":{"selector":{"app":"'$APP_NAME'","color":"'$NEW_COLOR'"}}}'
+                    '''
+                }
+            }
+        }
+
+        stage('Clean Up Old Deployment') {
+            steps {
+                script {
+                    sh '''
+                        kubectl delete deployment $APP_NAME-blue -n $K8S_NAMESPACE --ignore-not-found
+                    '''
+                }
+            }
+        }
+    }
+}
+
