@@ -2,79 +2,78 @@ pipeline {
     agent any
 
     environment {
-        KUBE_NAMESPACE = 'production'
-        SERVICE_NAME  = 'food-ordering-service'
-        BLUE_DEPLOY   = 'food-ordering-blue'
-        GREEN_DEPLOY  = 'food-ordering-green'
-        IMAGE_NAME    = 'sweetyraj22/food-ordering-app'
-        IMAGE_TAG     = "latest"
+        DOCKER_HUB_CREDENTIALS = 'dockerhub'
+        DOCKER_HUB_REPO = 'sweety083/online-food-ordering' // change this to your actual DockerHub repo name
+        APP_NAME = 'online-food-ordering'
+        K8S_NAMESPACE = 'production'
     }
 
     stages {
-
-        stage('Checkout') {
+        stage('Checkout Code') {
             steps {
-                git 'https://github.com/Sweety083/Online-Food-Ordering-Web-App.git'
+                checkout scm
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 script {
-                    sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
-                    sh "docker push ${IMAGE_NAME}:${IMAGE_TAG}"
+                    sh 'docker build -t $DOCKER_HUB_REPO:latest .'
                 }
             }
         }
 
-        stage('Deploy Green Version') {
+        stage('Push Docker Image') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: "${DOCKER_HUB_CREDENTIALS}", usernameVariable: 'DOCKERHUB_USER', passwordVariable: 'DOCKERHUB_PASS')]) {
+                    script {
+                        sh '''
+                            echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin
+                            docker push $DOCKER_HUB_REPO:latest
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes (Green)') {
             steps {
                 script {
-                    // Apply green deployment
-                    sh "kubectl apply -f k8s/deployment-green.yaml -n ${KUBE_NAMESPACE} --validate=false"
+                    sh '''
+                        kubectl apply -f k8s/deployment-green.yaml -n $K8S_NAMESPACE --validate=false
+                        kubectl apply -f k8s/service.yaml -n $K8S_NAMESPACE --validate=false
+                    '''
                 }
             }
         }
 
-        stage('Verify Green Pods') {
+        stage('Switch Service (Blue-Green)') {
             steps {
                 script {
-                    // Wait until green pods are ready
-                    sh """
-                    kubectl rollout status deployment/${GREEN_DEPLOY} -n ${KUBE_NAMESPACE}
-                    """
+                    sh '''
+                        CURRENT_COLOR=$(kubectl get svc $APP_NAME -n $K8S_NAMESPACE -o jsonpath='{.spec.selector.color}')
+                        if [ "$CURRENT_COLOR" = "blue" ]; then
+                            NEW_COLOR="green"
+                        else
+                            NEW_COLOR="blue"
+                        fi
+                        echo "Switching service to $NEW_COLOR version"
+                        kubectl patch svc $APP_NAME -n $K8S_NAMESPACE -p '{"spec":{"selector":{"app":"'$APP_NAME'","color":"'$NEW_COLOR'"}}}'
+                    '''
                 }
             }
         }
 
-        stage('Switch Traffic to Green') {
+        stage('Clean Up Old Deployment') {
             steps {
                 script {
-                    // Patch service to point to green pods
-                    sh """
-                    kubectl patch svc ${SERVICE_NAME} -n ${KUBE_NAMESPACE} -p '{"spec":{"selector":{"app":"food-ordering","version":"green"}}}'
-                    """
+                    sh '''
+                        kubectl delete deployment $APP_NAME-blue -n $K8S_NAMESPACE --ignore-not-found
+                    '''
                 }
             }
-        }
-
-        stage('Optional: Remove Blue Deployment') {
-            steps {
-                script {
-                    // Delete old blue deployment
-                    sh "kubectl delete deployment ${BLUE_DEPLOY} -n ${KUBE_NAMESPACE} || true"
-                }
-            }
-        }
-    }
-
-    post {
-        success {
-            echo "✅ Blue-Green deployment successful. Service now points to GREEN version!"
-        }
-        failure {
-            echo "❌ Deployment failed. Check logs!"
         }
     }
 }
+
 
