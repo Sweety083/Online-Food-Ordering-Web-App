@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         DOCKERHUB_CREDENTIALS = 'dockerhub' // Jenkins DockerHub credential ID
-        DOCKER_IMAGE = "sweetyraj22/food-ordering:latest"
+        DOCKER_IMAGE = "sweetyraj22/food-ordering:latest" // fixed username
         K8S_NAMESPACE = "production" // your namespace
         APP_NAME = "food-ordering"
         BLUE_DEPLOYMENT = "food-ordering-blue"
@@ -31,7 +31,9 @@ pipeline {
             steps {
                 withCredentials([usernamePassword(credentialsId: "${DOCKERHUB_CREDENTIALS}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     script {
+                        // Login to Docker Hub using correct username
                         sh "echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin"
+                        // Push image to Docker Hub with corrected username
                         sh "docker push ${DOCKER_IMAGE}"
                     }
                 }
