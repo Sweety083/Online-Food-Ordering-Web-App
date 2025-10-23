@@ -1,22 +1,19 @@
-# Use official PHP 7.4 with Apache image
 FROM php:7.4-apache
 
 # Enable Apache rewrite module
 RUN a2enmod rewrite
 
-# Set working directory
-WORKDIR /var/www/html
-
-# Copy application source code to container
-COPY . /var/www/html/
-
-# Install MySQL client
+# Install only the required packages and clean cache to reduce image size
 RUN apt-get update && \
-    apt-get install -y default-mysql-client && \
+    apt-get install -y --no-install-recommends default-mysql-client && \
     rm -rf /var/lib/apt/lists/*
 
-# Expose port 80 for web
+# Set working directory
+WORKDIR /var/www/html/
+
+# Copy only required files (exclude unnecessary files via .dockerignore)
+COPY . .
+
+# Expose port
 EXPOSE 80
 
-# Start Apache in foreground
-CMD ["apache2-foreground"]
